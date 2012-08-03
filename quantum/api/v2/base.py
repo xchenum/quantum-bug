@@ -35,6 +35,8 @@ FAULT_MAP = {exceptions.NotFound: webob.exc.HTTPNotFound,
              exceptions.OverlappingAllocationPools: webob.exc.HTTPConflict,
              exceptions.OutOfBoundsAllocationPool: webob.exc.HTTPBadRequest,
              exceptions.InvalidAllocationPool: webob.exc.HTTPBadRequest,
+             exceptions.HostRoutesExhausted: webob.exc.HTTPBadRequest,
+             exceptions.DNSNameServersExhausted: webob.exc.HTTPBadRequest,
              }
 
 QUOTAS = quota.QUOTAS
