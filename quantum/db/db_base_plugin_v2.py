@@ -740,7 +740,7 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
         #               use emtpy string?
         if s['gateway_ip'] == attributes.ATTR_NOT_SPECIFIED:
             s['gateway_ip'] = str(netaddr.IPAddress(net.first + 1))
-
+            
         tenant_id = self._get_tenant_id_for_create(context, s)
         with context.session.begin():
             network = self._get_network(context, s["network_id"])
