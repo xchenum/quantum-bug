@@ -98,6 +98,21 @@ class Port(model_base.BASEV2, HasId, HasTenant):
     device_id = sa.Column(sa.String(255), nullable=False)
 
 
+class DNSNameServer(model_base.BASEV2):
+    """Internal representation of a DNS nameserver"""
+    address = sa.Column(sa.String(128), nullable=False, primary_key=True)
+    subnet_id = sa.Column(sa.String(36), sa.ForeignKey('subnets.id'),
+                          primary_key=True)
+
+
+class Route(model_base.BASEV2):
+    """Represents a route for a subnet or port."""
+    destination = sa.Column(sa.String(64), nullable=False, primary_key=True)
+    nexthop = sa.Column(sa.String(64), nullable=False, primary_key=True)
+    subnet_id = sa.Column(sa.String(36), sa.ForeignKey('subnets.id'),
+                          primary_key=True)
+
+
 class Subnet(model_base.BASEV2, HasId, HasTenant):
     """Represents a quantum subnet.
 
@@ -112,9 +127,12 @@ class Subnet(model_base.BASEV2, HasId, HasTenant):
     allocation_pools = orm.relationship(IPAllocationPool,
                                         backref='subnet',
                                         lazy="dynamic")
-    #TODO(danwent):
-    # - dns_namservers
-    # - additional_routes
+    dns_nameservers = orm.relationship(DNSNameServer,
+                                       backref='subnet',
+                                       uselist=False)
+    routes = orm.relationship(Route,
+                              backref='subnet',
+                              uselist=False)
 
 
 class Network(model_base.BASEV2, HasId, HasTenant):

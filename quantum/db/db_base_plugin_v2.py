@@ -570,6 +570,15 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                         pool_2=r_range,
                         subnet_cidr=subnet_cidr)
 
+    def _validate_host_route(self, prefix, destination):
+        try:
+            netaddr.IPNetwork(prefix)
+            netaddr.IPAddress(destination)
+        except Exception:
+            err_msg = ("invalid route (prefix: %s, destination: %s)" %
+                       (prefix, destination))
+            raise q_exc.InvalidInput(error_message=err_msg)
+
     def _allocate_pools_for_subnet(self, context, subnet):
         """Create IP allocation pools for a given subnet
 
@@ -623,7 +632,13 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                'allocation_pools': [{'start': pool['first_ip'],
                                      'end': pool['last_ip']}
                                     for pool in subnet['allocation_pools']],
-               'gateway_ip': subnet['gateway_ip']}
+               'gateway_ip': subnet['gateway_ip'],
+               'dns_nameservers': [name['address'] \
+                    for name in subnet['dns_nameservers']],
+               'host_routes': [{'destination': route['destination'],
+                                'nexthop': route['nexthop']}
+                               for route in subnet['routes']],
+               }
         return self._fields(res, fields)
 
     def _make_port_dict(self, port, fields=None):
@@ -684,9 +699,45 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                                     filters=filters, fields=fields,
                                     verbose=verbose)
 
+    def _validate_subnet(self, s):
+        """a subroutine to validate a subnet spec"""
+        if s['gateway_ip'] != attributes.ATTR_NOT_SPECIFIED:
+            try:
+                netaddr.IPAddress(s['gateway_ip'])
+            except Exception:
+                err_msg = ("unable to parse gateway ip: %s" %
+                           (s['gateway_ip']))
+                raise q_exc.InvalidInput(error_message=err_msg)
+            #NOTE(xchenum): need a way for user to specify no default gw
+
+        try:
+            netaddr.IPNetwork(s['cidr'])
+        except Exception:
+            err_msg = ("unable to parse cidr: %s" % (s['cidr']))
+            raise q_exc.InvalidInput(error_message=err_msg)
+
+        # check if the number of DNS nameserver exceeds the quota
+        if len(s['dns_nameservers']) > cfg.CONF.max_dns_nameservers:
+            raise q_exc.DNSNameServersExhausted(
+                subnet_id=id,
+                quota=cfg.CONF.max_dns_nameservers)
+
+        # check if the number of host routes exceeds the quota
+        if len(s['host_routes']) > cfg.CONF.max_subnet_host_routes:
+            raise q_exc.HostRoutesExhausted(
+                subnet_id=id,
+                quota=cfg.CONF.max_subnet_host_routes)
+        # check if the routes are all valid
+        for rt in s['host_routes']:
+            self._validate_host_route(rt)
+
     def create_subnet(self, context, subnet):
         s = subnet['subnet']
+        self._validate_subnet(s)
+
         net = netaddr.IPNetwork(s['cidr'])
+        #NOTE(xchenum): need special value for user to specify no default gw
+        #               use emtpy string?
         if s['gateway_ip'] == attributes.ATTR_NOT_SPECIFIED:
             s['gateway_ip'] = str(netaddr.IPAddress(net.first + 1))
 
@@ -701,8 +752,22 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                                       ip_version=s['ip_version'],
                                       cidr=s['cidr'],
                                       gateway_ip=s['gateway_ip'])
-            context.session.add(subnet)
+
+            # perform allocate pools first, since it might raise an error
             pools = self._allocate_pools_for_subnet(context, s)
+
+            context.session.add(subnet)
+            # NOTE(xchenum): what if no dns is provided
+            #                should we give a default?
+            for addr in s['dns_nameservers']:
+                ns = models_v2.DNSNameServer(address=addr,
+                                             subnet_id=subnet.subnet_id)
+                context.session.add(ns)
+            for rt in s['host_routes']:
+                route = models_v2.Route(subnet_id=subnet.id,
+                                        prefix=rt['destination'],
+                                        nexthop=rt['nexthop'])
+                context.session.add(route)
             for pool in pools:
                 ip_pool = models_v2.IPAllocationPool(subnet=subnet,
                                                      first_ip=pool['start'],
@@ -713,10 +778,13 @@ class QuantumDbPluginV2(quantum_plugin_base_v2.QuantumPluginBaseV2):
                     first_ip=pool['start'],
                     last_ip=pool['end'])
                 context.session.add(ip_range)
+
         return self._make_subnet_dict(subnet)
 
     def update_subnet(self, context, id, subnet):
         s = subnet['subnet']
+        self._validate_subnet(s)
+
         with context.session.begin():
             subnet = self._get_subnet(context, id)
             subnet.update(s)
